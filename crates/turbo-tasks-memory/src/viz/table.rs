@@ -72,8 +72,9 @@ pub fn create_table(root: GroupTree, stats_type: StatsType) -> String {
         // name
         write!(
             out,
-            "<td bgcolor=\"{}\">{}</td>",
+            "<td bgcolor=\"{}\"><a href=\"./table?parents={}\">{}</a></td>",
             as_hash_color(&name),
+            ty.to_id(),
             escape_html(&name)
         )?;
         // count

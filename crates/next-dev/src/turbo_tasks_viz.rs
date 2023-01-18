@@ -5,13 +5,14 @@ use mime::TEXT_HTML_UTF_8;
 use turbo_tasks::{get_invalidator, TurboTasks, TurboTasksBackendApi, Value};
 use turbo_tasks_fs::File;
 use turbo_tasks_memory::{
-    stats::{ReferenceType, Stats},
+    stats::{ReferenceType, Stats, StatsTaskType},
     viz, MemoryBackend,
 };
 use turbopack_core::asset::AssetContentVc;
 use turbopack_dev_server::source::{
-    ContentSource, ContentSourceContent, ContentSourceData, ContentSourceDataFilter,
-    ContentSourceDataVary, ContentSourceResultVc, ContentSourceVc, NeededData,
+    query::QueryValue, ContentSource, ContentSourceContent, ContentSourceData,
+    ContentSourceDataFilter, ContentSourceDataVary, ContentSourceResultVc, ContentSourceVc,
+    NeededData,
 };
 
 #[turbo_tasks::value(serialization = "none", eq = "manual", cell = "new", into = "new")]
@@ -77,10 +78,37 @@ impl ContentSource for TurboTasksSource {
                     let b = tt.backend();
                     let active_only = query.contains_key("active");
                     let include_unloaded = query.contains_key("unloaded");
+                    let parents = query
+                        .get("parents")
+                        .and_then(|v| {
+                            if let QueryValue::String(s) = v {
+                                Some(s)
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(|s| StatsTaskType::from_id(s));
                     b.with_all_cached_tasks(|task| {
-                        stats.add_id_conditional(b, task, |_, info| {
-                            (include_unloaded || !info.unloaded) && (!active_only || info.active)
-                        });
+                        stats.add_id_conditional(
+                            b,
+                            task,
+                            |_, info| {
+                                (include_unloaded || !info.unloaded)
+                                    && (!active_only || info.active)
+                            },
+                            |_, _, references| {
+                                if let Some(child) = &parents {
+                                    if !references
+                                        .get(child)
+                                        .map(|r| r.contains(&ReferenceType::Child))
+                                        .unwrap_or_default()
+                                    {
+                                        return false;
+                                    }
+                                }
+                                true
+                            },
+                        );
                     });
                     let tree = stats.treeify(ReferenceType::Dependency);
                     let table = viz::table::create_table(tree, tt.stats_type());

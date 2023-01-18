@@ -5,6 +5,7 @@
 #![feature(lint_reasons)]
 #![feature(box_patterns)]
 #![feature(int_roundings)]
+#![feature(slice_group_by)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod cell;

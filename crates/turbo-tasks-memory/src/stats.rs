@@ -44,6 +44,36 @@ impl Display for StatsTaskType {
     }
 }
 
+impl StatsTaskType {
+    pub fn to_id(&self) -> String {
+        match *self {
+            StatsTaskType::Root(id) => format!("root-{}", *id),
+            StatsTaskType::Once(id) => format!("once-{}", *id),
+            StatsTaskType::Native(id) => format!("native-{}", *id),
+            StatsTaskType::ResolveNative(id) => format!("resolve-{}", *id),
+            StatsTaskType::ResolveTrait(trait_ty, ref name) => {
+                format!("trait-{}-{}", *trait_ty, name)
+            }
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        let (ty, id) = id.split_once('-')?;
+        Some(match ty {
+            "root" => Self::Root(TaskId::from(id.parse::<usize>().ok()?)),
+            "once" => Self::Once(TaskId::from(id.parse::<usize>().ok()?)),
+            "native" => Self::Native(FunctionId::from(id.parse::<usize>().ok()?)),
+            "resolve" => Self::ResolveNative(FunctionId::from(id.parse::<usize>().ok()?)),
+            "trait" => {
+                let (trait_ty, name) = id.split_once('-')?;
+                let t = TraitTypeId::from(trait_ty.parse::<usize>().ok()?);
+                Self::ResolveTrait(t, name.to_string())
+            }
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct ReferenceStats {
     pub count: usize,
@@ -107,7 +137,7 @@ impl Stats {
     }
 
     pub fn add(&mut self, backend: &MemoryBackend, task: &Task) {
-        self.add_conditional(backend, task, |_, _| true)
+        self.add_conditional(backend, task, |_, _| true, |_, _, _| true)
     }
 
     pub fn add_conditional(
@@ -115,12 +145,33 @@ impl Stats {
         backend: &MemoryBackend,
         task: &Task,
         condition: impl FnOnce(&StatsTaskType, &TaskStatsInfo) -> bool,
+        references_condition: impl FnOnce(
+            &StatsTaskType,
+            &TaskStatsInfo,
+            &HashMap<StatsTaskType, HashSet<ReferenceType>>,
+        ) -> bool,
     ) {
         let info = task.get_stats_info(backend);
         let ty = task.get_stats_type();
         if !condition(&ty, &info) {
             return;
         }
+        let StatsReferences { mut tasks, .. } = task.get_stats_references();
+        tasks.sort_by_key(|&(_, id)| id);
+        let references_map: HashMap<_, _> = tasks
+            .group_by(|(_, a), (_, b)| a == b)
+            .map(|slice| {
+                let task = slice[0].1;
+                backend.with_task(task, |task| {
+                    let ty = task.get_stats_type();
+                    (ty, slice.iter().map(|&(ty, _)| ty).collect::<HashSet<_>>())
+                })
+            })
+            .collect();
+        if !references_condition(&ty, &info, &references_map) {
+            return;
+        }
+
         let TaskStatsInfo {
             total_duration,
             last_duration,
@@ -154,14 +205,18 @@ impl Stats {
         }
         stats.scopes += child_scopes;
 
-        let StatsReferences { tasks, .. } = task.get_stats_references();
-        let set: HashSet<_> = tasks.into_iter().collect();
-        for (ref_type, task) in set {
-            backend.with_task(task, |task| {
-                let ty = task.get_stats_type();
+        for (ty, ref_types) in references_map {
+            if ref_types.len() == 1 {
+                // Special case for len 1 which avoid cloning the `ty`. This is a common case.
+                let ref_type = ref_types.into_iter().next().unwrap();
                 let ref_stats = stats.references.entry((ref_type, ty)).or_default();
                 ref_stats.count += 1;
-            })
+            } else {
+                for ref_type in ref_types {
+                    let ref_stats = stats.references.entry((ref_type, ty.clone())).or_default();
+                    ref_stats.count += 1;
+                }
+            }
         }
     }
 
@@ -176,9 +231,14 @@ impl Stats {
         backend: &MemoryBackend,
         id: TaskId,
         condition: impl FnOnce(&StatsTaskType, &TaskStatsInfo) -> bool,
+        references_condition: impl FnOnce(
+            &StatsTaskType,
+            &TaskStatsInfo,
+            &HashMap<StatsTaskType, HashSet<ReferenceType>>,
+        ) -> bool,
     ) {
         backend.with_task(id, |task| {
-            self.add_conditional(backend, task, condition);
+            self.add_conditional(backend, task, condition, references_condition);
         });
     }
 
