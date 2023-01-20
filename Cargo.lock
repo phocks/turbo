@@ -3573,6 +3573,7 @@ dependencies = [
  "qstring",
  "serde",
  "serde_json",
+ "swc_core 0.56.0",
  "turbo-tasks",
  "turbo-tasks-build",
  "turbo-tasks-env",
