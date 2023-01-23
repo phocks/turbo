@@ -342,6 +342,8 @@ async fn ecmascript_chunk_content_single_entry(
 
 #[turbo_tasks::value(serialization = "none")]
 pub struct EcmascriptChunkContent {
+    main_entries: EcmascriptChunkPlaceablesVc,
+    omit_entries: Option<EcmascriptChunkPlaceablesVc>,
     module_factories: EcmascriptChunkContentEntriesSnapshotReadRef,
     chunk_path: FileSystemPathVc,
     output_root: FileSystemPathVc,
@@ -452,6 +454,8 @@ impl EcmascriptChunkContentVc {
         let module_factories = chunk_content.chunk_items.to_entry_snapshot().await?;
         let output_root = context.output_root();
         Ok(EcmascriptChunkContent {
+            main_entries,
+            omit_entries,
             module_factories,
             chunk_path,
             output_root,
@@ -585,6 +589,14 @@ impl EcmascriptChunkContentVc {
             );
         };
         let mut code = CodeBuilder::default();
+        for entry in &*this.main_entries.await? {
+            writeln!(code, "/* entry {} */", entry.path().to_string().await?)?;
+        }
+        if let Some(omit_entries) = this.omit_entries {
+            for entry in &*omit_entries.await? {
+                writeln!(code, "/* omit {} */", entry.path().to_string().await?)?;
+            }
+        }
         code += "(self.TURBOPACK = self.TURBOPACK || []).push([";
 
         writeln!(code, "{}, {{", stringify_str(chunk_server_path))?;
@@ -989,8 +1001,8 @@ impl Asset for EcmascriptChunk {
             for entry in &main_entries {
                 let path = entry.path().to_string().await?;
                 hasher.write_value(path);
-                need_hash = true;
             }
+            need_hash = true;
             if let &Some(common_parent) = &*self_vc.common_parent().await? {
                 common_parent
             } else {
