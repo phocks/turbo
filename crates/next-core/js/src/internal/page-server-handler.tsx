@@ -8,6 +8,7 @@ import "@vercel/turbopack-next/internal/shims";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { renderToHTML, RenderOpts } from "next/dist/server/render";
+import { buildStaticPaths } from "next/dist/build/utils";
 import type { BuildManifest } from "next/dist/server/get-page-files";
 import type { ReactLoadableManifest } from "next/dist/server/load-components";
 
@@ -24,15 +25,22 @@ type IpcIncomingMessage = {
 };
 
 type IpcOutgoingMessage = {
-  type: "result";
-  result: string | { body: string; contentType?: string };
+  type: "response";
+  statusCode: number;
+  contentType: string;
+  body: string;
 };
+
+const MIME_APPLICATION_JAVASCRIPT = "application/javascript";
+const MIME_TEXT_HTML_UTF8 = "text/html; charset=utf-8";
 
 export default function startHandler({
   isDataReq,
   App,
   Document,
   Component,
+  notFoundModule,
+  hasCustomNotFound,
   otherExports,
   chunkGroup,
 }: {
@@ -40,6 +48,8 @@ export default function startHandler({
   App?: any;
   Document?: any;
   Component?: any;
+  notFoundModule: any;
+  hasCustomNotFound: boolean;
   otherExports: any;
   chunkGroup?: ChunkGroup;
 }) {
@@ -59,35 +69,9 @@ export default function startHandler({
         }
       }
 
-      let res = await runOperation(renderData);
+      const res = await runOperation(renderData);
 
-      if (isDataReq) {
-        if (res === undefined) {
-          // Page data is only returned if the page had getXxyProps.
-          res = {};
-        }
-        ipc.send({
-          type: "result",
-          result: {
-            contentType: "application/json",
-            body: JSON.stringify(res),
-          },
-        });
-      } else {
-        if (res == null) {
-          throw new Error("no render result returned");
-        }
-        if (typeof res !== "string") {
-          throw new Error("Non-string render result returned");
-        }
-        ipc.send({
-          type: "result",
-          result: {
-            contentType: undefined,
-            body: res,
-          },
-        });
-      }
+      ipc.send(res);
     }
   })().catch((err) => {
     ipc.sendError(err);
@@ -95,7 +79,7 @@ export default function startHandler({
 
   async function runOperation(
     renderData: RenderData
-  ): Promise<Object | string | null> {
+  ): Promise<IpcOutgoingMessage> {
     // TODO(alexkirsz) This is missing *a lot* of data, but it's enough to get a
     // basic render working.
 
@@ -105,6 +89,9 @@ export default function startHandler({
         // computing the chunk items of `next-hydrate.js`, so they contain both
         // _app and page chunks.
         "/_app": [],
+        // TODO(alexkirsz) /404 and /_error should also have their own chunks.
+        "/404": [],
+        "/_error": [],
         [renderData.path]: chunkGroup || [],
       },
 
@@ -203,23 +190,76 @@ export default function startHandler({
       renderOpts
     );
 
+    // This is set when `getStaticProps` returns `notFound: true`.
+    const isNotFound = (renderOpts as any).isNotFound;
+
+    if (isNotFound) {
+      // Setting this here is necessary for `Error.getInitialProps` to work properly.
+      res.statusCode = 404;
+
+      if (isDataReq) {
+        return {
+          type: "response",
+          statusCode: 404,
+          body: '{"notFound":true}',
+          contentType: MIME_APPLICATION_JAVASCRIPT,
+        };
+      }
+
+      // If a custom 404 page is defined, the pathname should be set to /404.
+      const errPathname = hasCustomNotFound ? "/404" : "/_error";
+
+      const notFoundRenderResult = await renderToHTML(
+        req,
+        res,
+        errPathname,
+        query,
+        {
+          ...renderOpts,
+          getStaticProps: notFoundModule.getStaticProps,
+          getStaticPaths: undefined,
+          getServerSideProps: undefined,
+          Component: notFoundModule.default,
+          err: undefined,
+          // TODO(alexkirsz): Add locales
+        }
+      );
+
+      return {
+        type: "response",
+        statusCode: 404,
+        contentType: notFoundRenderResult?.contentType() ?? MIME_TEXT_HTML_UTF8,
+        body: notFoundRenderResult?.toUnchunkedString() ?? "",
+      };
+    }
+
     if (isDataReq) {
       // TODO(from next.js): change this to a different passing mechanism
       const pageData = (renderOpts as any).pageData;
-      return pageData;
+      return {
+        type: "response",
+        statusCode: 200,
+        contentType: MIME_APPLICATION_JAVASCRIPT,
+        // Page data is only returned if the page had getXxyProps.
+        body: JSON.stringify(pageData === undefined ? {} : pageData),
+      };
     }
 
     if (!renderResult) {
-      return null;
+      throw new Error("no render result returned");
     }
 
     const body = renderResult.toUnchunkedString();
     // TODO: handle these
     // const sprRevalidate = (renderOpts as any).revalidate;
-    // const isNotFound = (renderOpts as any).isNotFound;
     // const isRedirect = (renderOpts as any).isRedirect;
 
-    return body;
+    return {
+      type: "response",
+      statusCode: 200,
+      contentType: renderResult.contentType() ?? MIME_TEXT_HTML_UTF8,
+      body,
+    };
   }
 }
 

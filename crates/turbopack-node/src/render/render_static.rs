@@ -1,5 +1,7 @@
+use std::str::FromStr;
+
 use anyhow::{bail, Context, Result};
-use mime::TEXT_HTML_UTF_8;
+use mime::Mime;
 use turbo_tasks::primitives::StringVc;
 use turbo_tasks_fs::{File, FileContent, FileSystemPathVc};
 use turbopack_core::{
@@ -10,8 +12,7 @@ use turbopack_dev_server::html::DevHtmlAssetVc;
 use turbopack_ecmascript::{chunk::EcmascriptChunkPlaceablesVc, EcmascriptModuleAssetVc};
 
 use super::{
-    issue::RenderingIssue, RenderDataVc, RenderResult, RenderStaticIncomingMessage,
-    RenderStaticOutgoingMessage,
+    issue::RenderingIssue, RenderDataVc, RenderStaticIncomingMessage, RenderStaticOutgoingMessage,
 };
 use crate::{get_intermediate_asset, get_renderer_pool, pool::NodeJsOperation, trace_stack};
 
@@ -73,15 +74,15 @@ async fn run_static_operation(
         .await
         .context("receiving from node.js process")?
     {
-        RenderStaticIncomingMessage::Result {
-            result: RenderResult::Simple(body),
-        } => Ok(FileContent::Content(File::from(body).with_content_type(TEXT_HTML_UTF_8)).into()),
-        RenderStaticIncomingMessage::Result {
-            result: RenderResult::Advanced { body, content_type },
-        } => Ok(FileContent::Content(
+        RenderStaticIncomingMessage::Response {
+            status_code,
+            content_type,
+            body,
+        } => Ok(FileContent::Content({
             File::from(body)
-                .with_content_type(content_type.map_or(Ok(TEXT_HTML_UTF_8), |c| c.parse())?),
-        )
+                .with_status_code(status_code)
+                .with_content_type(Mime::from_str(&content_type)?)
+        })
         .into()),
         RenderStaticIncomingMessage::Error(error) => {
             bail!(trace_stack(error, intermediate_asset, intermediate_output_path).await?)

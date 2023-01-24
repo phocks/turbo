@@ -199,10 +199,11 @@ async fn process_request_with_content_source(
                         |m| m.to_string(),
                     );
 
+                    let status_code = content.status_code().unwrap_or(200);
                     let content = content.content();
                     let bytes = content.read();
                     return Ok(Response::builder()
-                        .status(200)
+                        .status(status_code)
                         .header("Content-Type", content_type)
                         .header("Content-Length", content.len().to_string())
                         .body(hyper::Body::wrap_stream(bytes))?);

@@ -183,6 +183,14 @@ pub async fn get_next_server_import_map(
                     external_request_to_import_mapping("next/document"),
                 ],
             );
+            insert_alias_to_alternatives(
+                &mut import_map,
+                format!("{VIRTUAL_PACKAGE_NAME}/pages/404"),
+                vec![
+                    request_to_import_mapping(pages_dir, "./404"),
+                    external_request_to_import_mapping("next/error"),
+                ],
+            );
 
             import_map.insert_exact_alias("next", ImportMapping::External(None).into());
             import_map.insert_wildcard_alias("next/", ImportMapping::External(None).into());
