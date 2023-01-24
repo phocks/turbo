@@ -1,4 +1,6 @@
-declare const __turbopack_external_require__: (id: string) => any;
+declare const __turbopack_external_require__: {
+  resolve: (name: string, opt: { paths: string[] }) => string;
+} & ((id: string) => any);
 
 import type { Ipc } from "../ipc/evaluate";
 import {
@@ -30,7 +32,9 @@ const transform = (ipc: Ipc, content: string, name: string, loaders: any[]) => {
     const resourceDir = dirname(resource);
     // TODO this should be handled in turbopack instead to ensure it's watched
     loaders = loaders.map((loader: any) => {
-      return require.resolve(loader, { paths: [resourceDir] });
+      return __turbopack_external_require__.resolve(loader, {
+        paths: [resourceDir],
+      });
     });
     runLoaders(
       {
