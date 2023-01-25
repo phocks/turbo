@@ -49,8 +49,10 @@ async function run() {
 
   // Filter out next.js integration test jobs
   const integrationTestJobs = jobs?.filter((job) =>
-    job?.name?.startsWith("Next.js integration test (")
+    /Next\.js integration test \([^)]*\)$/.test(job.name)
   );
+  console.log(jobs?.map((j) => j.name));
+
   console.log(
     `Logs found for ${integrationTestJobs.length} jobs`,
     integrationTestJobs.map((job) => job.name)
@@ -135,7 +137,15 @@ async function run() {
             ?.shift()
             ?.trim();
 
+          octokit.rest.issues.createComment({
+            ...context.repo,
+            issue_number: prNumber,
+            body: testData,
+          });
+
           testData = JSON.parse(testData);
+
+
         } catch (_) {
           console.log(`Failed to parse test data`);
         }
