@@ -6,9 +6,14 @@ export type ToastProps = React.PropsWithChildren & {
   className?: string;
 };
 
-export function Toast({ onClick, children, className }: ToastProps) {
+export function Toast({
+  onClick,
+  children,
+  className,
+  ...rest
+}: ToastProps & React.HTMLProps<HTMLDivElement>) {
   return (
-    <div onClick={onClick} className={clsx("toast", className)}>
+    <div {...rest} onClick={onClick} className={clsx("toast", className)}>
       <div className="toast-wrapper">{children}</div>
     </div>
   );
